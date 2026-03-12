@@ -1,0 +1,1 @@
+- Added support for custom aps like: VSC, Chrome or ANY APP because you need a Spotify Premium account to synk your status to slack so this should be more helpfull :)
