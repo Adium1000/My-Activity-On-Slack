@@ -3,5 +3,28 @@
   "sp_secret": "",
   "slack_tok": "",
   "emoji": ":spotify_logo:",
-  "interval": "1"
+  "interval": "1",
+  "other_apps": [
+    {
+      "process": "YourPhoneAppProxy.exe",
+      "status_text": "Microsoft link to Windows",
+      "emoji": ":app:",
+      "description": "Phone Link",
+      "enabled": true
+    },
+    {
+      "process": "Code.exe",
+      "status_text": "Coding in VS Code",
+      "emoji": ":vscode:",
+      "description": "Visual Studio Code",
+      "enabled": true
+    },
+    {
+      "process": "chrome.exe",
+      "status_text": "Browsing in Chrome",
+      "emoji": ":chrome:",
+      "description": "Google Chrome",
+      "enabled": true
+    }
+  ]
 }
