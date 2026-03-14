@@ -92,3 +92,5 @@ Watch on [Youtube](https://www.youtube.com/watch?v=rLFpijAMtlY)
 ![Credits](Github_Assets/Guide/credits.png)
 
 !!! All logos for other apps belong to their respective developers and are not owned by me, such as the logos for: Spotify, VSC, VLC, Chrome, Slack !!!
+
+

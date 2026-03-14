@@ -1,3 +1,13 @@
+#   _____            _________ __          __                   __             _________.__                 __    
+#  /     \ ___.__.  /   _____//  |______ _/  |_ __ __  ______ _/  |_  ____    /   _____/|  | _____    ____ |  | __
+#  /  \ /  <   |  |  \_____  \\   __\__  \\   __\  |  \/  ___/ \   __\/  _ \   \_____  \ |  | \__  \ _/ ___\|  |/ /
+# /    Y    \___  |  /        \|  |  / __ \|  | |  |  /\___ \   |  | (  <_> )  /        \|  |__/ __ \\  \___|    < 
+# \____|__  / ____| /_______  /|__| (____  /__| |____//____  >  |__|  \____/  /_______  /|____(____  /\___  >__|_ \
+#         \/\/              \/           \/                \/                         \/           \/     \/     \/
+
+# Version build 3.01426 from 14.3.26 | Happy status sharing :3 
+
+
 import time
 import datetime
 import requests
@@ -13,6 +23,13 @@ from tkinter import messagebox
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs, urlencode
 from pathlib import Path
+
+try:
+    import pystray
+    from PIL import Image, ImageDraw
+    TRAY_AVAILABLE = True
+except ImportError:
+    TRAY_AVAILABLE = False
 
 
 def get_base_dir():
@@ -41,7 +58,42 @@ def save_config(data):
     except Exception:
         pass
 
-#Theme
+STARTUP_REG_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
+STARTUP_APP_NAME = "MyActivityOnSlack"
+
+def get_startup_enabled():
+    """Check if app is registered to run at Windows startup."""
+    try:
+        import winreg
+        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, STARTUP_REG_KEY, 0, winreg.KEY_READ)
+        winreg.QueryValueEx(key, STARTUP_APP_NAME)
+        winreg.CloseKey(key)
+        return True
+    except Exception:
+        return False
+
+def set_startup_enabled(enable: bool):
+    """Add or remove app from Windows startup registry."""
+    try:
+        import winreg
+        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, STARTUP_REG_KEY, 0, winreg.KEY_SET_VALUE)
+        if enable:
+            if getattr(sys, 'frozen', False):
+                exe = sys.executable
+            else:
+                exe = f'pythonw "{os.path.abspath(__file__)}"'
+            winreg.SetValueEx(key, STARTUP_APP_NAME, 0, winreg.REG_SZ, exe + " --minimized")
+        else:
+            try:
+                winreg.DeleteValue(key, STARTUP_APP_NAME)
+            except FileNotFoundError:
+                pass
+        winreg.CloseKey(key)
+        return True
+    except Exception:
+        return False
+
+#Theme for my app, you can change this settings as you want to make your own
 BG        = "#0f0f13"
 PANEL     = "#17171f"
 CARD      = "#1e1e2a"
@@ -608,10 +660,68 @@ class App(tk.Tk):
         self._set_icon()
         self._apply_dark_titlebar()
         self._other_app_rows = []
+        self._tray_icon = None
         self._build_ui()
         self._load_saved_config()
         self._update_status("idle", "Disconnected", TEXT_DIM)
         self.protocol("WM_DELETE_WINDOW", self._on_close)
+        cfg = load_config()
+        start_minimized = "--minimized" in sys.argv or cfg.get("start_minimized", False)
+        if start_minimized and TRAY_AVAILABLE:
+            self.after(200, self._minimize_to_tray)
+        else:
+            self.deiconify()
+
+    def _create_tray_image(self):
+        """Create a simple tray icon image (green circle on dark background)."""
+        size = 64
+        img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(img)
+        draw.ellipse([2, 2, size-2, size-2], fill=(15, 15, 19, 255))
+        m = size // 4
+        draw.ellipse([m, m, size-m, size-m], fill=(29, 185, 84, 255))
+        return img
+
+    def _minimize_to_tray(self):
+        """Hide window and show system tray icon."""
+        if not TRAY_AVAILABLE:
+            self.iconify()
+            return
+        self.withdraw()
+        if self._tray_icon is None:
+            menu = pystray.Menu(
+                pystray.MenuItem("Show", self._restore_from_tray, default=True),
+                pystray.Menu.SEPARATOR,
+                pystray.MenuItem("Exit", self._quit_from_tray),
+            )
+            img = self._create_tray_image()
+            self._tray_icon = pystray.Icon(
+                "MyActivityOnSlack",
+                img,
+                "My Activity on Slack",
+                menu,
+            )
+            threading.Thread(target=self._tray_icon.run, daemon=True).start()
+
+    def _restore_from_tray(self, icon=None, item=None):
+        """Restore window from tray."""
+        self.after(0, self._do_restore)
+
+    def _do_restore(self):
+        self.deiconify()
+        self.lift()
+        self.focus_force()
+
+    def _quit_from_tray(self, icon=None, item=None):
+        """Quit app from tray menu."""
+        if self._tray_icon:
+            self._tray_icon.stop()
+            self._tray_icon = None
+        self.after(0, self._do_quit)
+
+    def _do_quit(self):
+        self._save_config()
+        self.destroy()
 
     def _set_icon(self):
         try:
@@ -667,9 +777,10 @@ class App(tk.Tk):
         sc.bind_all("<MouseWheel>", lambda e: sc.yview_scroll(int(-1*(e.delta/120)),"units"))
         self._scroll_frame = sf
 
-        build_card_section(sf, "Slack Token",      self._build_slack_fields)
-        build_card_section(sf, "Spotify Playback", self._build_spotify_playback_fields)
-        build_card_section(sf, "Other Apps",       self._build_other_apps_fields)
+        build_card_section(sf, "General Settings",   self._build_general_settings)
+        build_card_section(sf, "Slack Token",         self._build_slack_fields)
+        build_card_section(sf, "Spotify Playback",    self._build_spotify_playback_fields)
+        build_card_section(sf, "Other Apps",          self._build_other_apps_fields)
         np_outer = tk.Frame(sf, bg=BG)
         np_outer.pack(fill="x", padx=16, pady=(0,12))
         npc = tk.Canvas(np_outer, bg=BG, highlightthickness=0, bd=0, height=78)
@@ -710,6 +821,89 @@ class App(tk.Tk):
         self._btn_start.pack(side="left", padx=(0,8))
         self._btn_stop  = self._make_btn(bf, "Stop",  self._do_stop,  RED,   "#a03434", state="disabled")
         self._btn_stop.pack(side="left")
+
+    def _build_general_settings(self, parent):
+        startup_row = tk.Frame(parent, bg=CARD)
+        startup_row.pack(fill="x", pady=(0, 4))
+
+        self._startup_var = tk.BooleanVar(value=get_startup_enabled())
+        startup_chk = tk.Checkbutton(
+            startup_row,
+            text="Start with Windows",
+            variable=self._startup_var,
+            command=self._on_startup_toggle,
+            bg=CARD, fg=TEXT, activebackground=CARD, activeforeground=TEXT,
+            selectcolor=CARD2, font=FONT_LABEL, highlightthickness=0, bd=0,
+            cursor="hand2",
+        )
+        startup_chk.pack(side="left")
+
+        self._startup_status_lbl = tk.Label(
+            startup_row, text="", font=FONT_SMALL, bg=CARD, fg=TEXT_DIM
+        )
+        self._startup_status_lbl.pack(side="left", padx=(8, 0))
+
+        if not sys.platform.startswith("win"):
+            startup_chk.config(state="disabled")
+            self._startup_status_lbl.config(text="(Windows only)")
+
+        tray_row = tk.Frame(parent, bg=CARD)
+        tray_row.pack(fill="x", pady=(0, 4))
+
+        self._start_minimized_var = tk.BooleanVar(value=False) 
+        tray_chk = tk.Checkbutton(
+            tray_row,
+            text="Start minimized to tray",
+            variable=self._start_minimized_var,
+            bg=CARD, fg=TEXT, activebackground=CARD, activeforeground=TEXT,
+            selectcolor=CARD2, font=FONT_LABEL, highlightthickness=0, bd=0,
+            cursor="hand2",
+        )
+        tray_chk.pack(side="left")
+
+        self._tray_status_lbl = tk.Label(
+            tray_row, text="", font=FONT_SMALL, bg=CARD, fg=TEXT_DIM
+        )
+        self._tray_status_lbl.pack(side="left", padx=(8, 0))
+
+        if not TRAY_AVAILABLE:
+            tray_chk.config(state="disabled")
+            self._tray_status_lbl.config(text="(Library error)")
+
+        close_row = tk.Frame(parent, bg=CARD)
+        close_row.pack(fill="x", pady=(0, 6))
+
+        self._close_to_tray_var = tk.BooleanVar(value=False)
+        close_chk = tk.Checkbutton(
+            close_row,
+            text="Minimize to tray on close",
+            variable=self._close_to_tray_var,
+            bg=CARD, fg=TEXT, activebackground=CARD, activeforeground=TEXT,
+            selectcolor=CARD2, font=FONT_LABEL, highlightthickness=0, bd=0,
+            cursor="hand2",
+        )
+        close_chk.pack(side="left")
+
+        if not TRAY_AVAILABLE:
+            close_chk.config(state="disabled")
+
+        if TRAY_AVAILABLE:
+            tk.Label(parent,
+                     text="ℹ  Tray icon: double-click to restore, right-click for menu",
+                     font=FONT_SMALL, bg=CARD, fg=TEXT_DIM, wraplength=380, justify="left"
+                     ).pack(anchor="w", pady=(2, 2))
+
+    def _on_startup_toggle(self):
+        enabled = self._startup_var.get()
+        ok = set_startup_enabled(enabled)
+        if ok:
+            self._startup_status_lbl.config(
+                text="✓ Saved" if enabled else "✓ Removed", fg=GREEN
+            )
+        else:
+            self._startup_status_lbl.config(text="✗ Failed", fg=RED)
+            self._startup_var.set(not enabled)  
+        self.after(2500, lambda: self._startup_status_lbl.config(text=""))
 
     def _build_slack_fields(self, parent):
         row = tk.Frame(parent, bg=CARD)
@@ -860,21 +1054,33 @@ class App(tk.Tk):
         if cfg.get("slack_tok"): self._slack_tok.set(cfg["slack_tok"])
         if cfg.get("emoji"):     self._emoji.set(cfg["emoji"])
         if cfg.get("interval"):  self._interval.set(cfg["interval"])
+        self._start_minimized_var.set(cfg.get("start_minimized", False))
+        self._close_to_tray_var.set(cfg.get("close_to_tray", False))
+        self._startup_var.set(get_startup_enabled())
         apps = cfg.get("other_apps") or DEFAULT_OTHER_APPS
         for a in apps: self._add_other_app(app_data=a)
 
     def _save_config(self):
         save_config({
-            "sp_id":      self._sp_id.get().strip(),
-            "sp_secret":  self._sp_secret.get().strip(),
-            "slack_tok":  self._slack_tok.get().strip(),
-            "emoji":      self._emoji.get().strip(),
-            "interval":   self._interval.get().strip(),
-            "other_apps": [r.get_data() for r in self._other_app_rows],
+            "sp_id":           self._sp_id.get().strip(),
+            "sp_secret":       self._sp_secret.get().strip(),
+            "slack_tok":       self._slack_tok.get().strip(),
+            "emoji":           self._emoji.get().strip(),
+            "interval":        self._interval.get().strip(),
+            "other_apps":      [r.get_data() for r in self._other_app_rows],
+            "start_minimized": self._start_minimized_var.get(),
+            "close_to_tray":   self._close_to_tray_var.get(),
         })
 
     def _on_close(self):
-        self._save_config(); self.destroy()
+        self._save_config()
+        if TRAY_AVAILABLE and self._close_to_tray_var.get():
+            self._minimize_to_tray()
+        else:
+            if self._tray_icon:
+                self._tray_icon.stop()
+                self._tray_icon = None
+            self.destroy()
 
     def _make_btn(self, parent, text, cmd, color, hover_color, state="normal"):
         import tkinter.font as tkfont
@@ -1064,5 +1270,4 @@ class App(tk.Tk):
 
 if __name__ == "__main__":
     app = App()
-    app.deiconify()
     app.mainloop()
