@@ -6,6 +6,8 @@
 
 ![alt text](Github_Assets/Guide/guide.png)
 
+Watch on [Youtube](https://www.youtube.com/watch?v=rLFpijAMtlY)
+
 - First download the app from releases !
 
 ### Get Slack Token 
